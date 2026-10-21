@@ -4,6 +4,8 @@ namespace Mouf\Installer;
 use Composer\Repository\InstalledRepositoryInterface;
 use Composer\Package\PackageInterface;
 use Composer\Installer\LibraryInstaller;
+use React\Promise\PromiseInterface;
+use function React\Promise\resolve;
 
 /**
  * This class is in charge of handling the installation of Mouf packages in composer.
@@ -21,11 +23,9 @@ class MoufLibraryInstaller extends LibraryInstaller {
 	 */
 	public function update(InstalledRepositoryInterface $repo, PackageInterface $initial, PackageInterface $target)
 	{
-		parent::update($repo, $initial, $target);
-
-		// Rewrite MoufUI.
-		$moufUIFileWriter = new MoufUIFileWritter($this->composer);
-		$moufUIFileWriter->writeMoufUI();
+		return $this->then(parent::update($repo, $initial, $target), function () {
+			$this->writeMoufUI();
+		});
 	}
 
 	/**
@@ -33,23 +33,20 @@ class MoufLibraryInstaller extends LibraryInstaller {
 	 */
 	public function install(InstalledRepositoryInterface $repo, PackageInterface $package)
 	{
-		parent::install($repo, $package);
+		return $this->then(parent::install($repo, $package), function () use ($package) {
+			// If this package is installed as part of a mouf upgrade/install, let's not run the MoufUI generation.
+			// Indeed, it has already been commited by the Mouf developers, no need to regenerate Mouf's MoufUI.
+			if (MoufFrameworkInstaller::getIsRunningMoufFrameworkInstaller()) {
+				return;
+			}
 
-		// If this package is installed as part of a mouf upgrade/install, let's not run the MoufUI generation.
-		// Indeed, it has already been commited by the Mouf developers, no need to regenerate Mouf's MoufUI.
-		if (MoufFrameworkInstaller::getIsRunningMoufFrameworkInstaller()) {
-			return;
-		}
+			$extra = $package->getExtra();
+			if (isset($extra['mouf']['install'])) {
+				$this->io->write("This package needs to be installed. Start your navigator and browse to Mouf UI to install it.");
+			}
 
-		$extra = $package->getExtra();
-		if (isset($extra['mouf']['install'])) {
-			$this->io->write("This package needs to be installed. Start your navigator and browse to Mouf UI to install it.");
-		}
-
-		// Rewrite MoufUI.
-		$moufUIFileWriter = new MoufUIFileWritter($this->composer);
-		$moufUIFileWriter->writeMoufUI();
-
+			$this->writeMoufUI();
+		});
 	}
 
 	/**
@@ -57,11 +54,9 @@ class MoufLibraryInstaller extends LibraryInstaller {
 	 */
 	public function uninstall(InstalledRepositoryInterface $repo, PackageInterface $package)
 	{
-		parent::uninstall($repo, $package);
-
-		// Rewrite MoufUI.
-		$moufUIFileWriter = new MoufUIFileWritter($this->composer);
-		$moufUIFileWriter->writeMoufUI();
+		return $this->then(parent::uninstall($repo, $package), function () {
+			$this->writeMoufUI();
+		});
 	}
 
 	/**
@@ -72,5 +67,16 @@ class MoufLibraryInstaller extends LibraryInstaller {
 		// Check if mouf-library is contained in the $packageType variable. It has to be a word in the string
 		// but there can be many other words in packageType.
 		return preg_match("/\\bmouf-library\\b/", $packageType) === 1;
+	}
+
+	private function writeMoufUI(): void
+	{
+		$moufUIFileWriter = new MoufUIFileWritter($this->composer);
+		$moufUIFileWriter->writeMoufUI();
+	}
+
+	private function then(?PromiseInterface $promise, callable $callback): PromiseInterface
+	{
+		return ($promise ?? resolve(null))->then($callback);
 	}
 }
